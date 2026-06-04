@@ -3919,6 +3919,90 @@ fun NuvemCloudScreen(viewModel: com.example.ui.DiaryViewModel) {
             }
         }
 
+        // Sincronização com GitHub (GitHub Sync)
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = Color(0xFF24292F).copy(alpha = 0.05f)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF24292F).copy(alpha = 0.2f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF24292F)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("🐙", fontSize = 20.sp)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Sincronização via GitHub Repos 📂",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Vincule seus arquivos para commit de backup remoto",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color(0xFFFFEBEE))
+                            .border(androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF5350).copy(alpha = 0.3f)))
+                            .padding(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("⚠️", fontSize = 16.sp)
+                            Text(
+                                text = "Essa funcionalidade requer um repositório com pelo menos 2 branches.",
+                                fontSize = 11.sp,
+                                color = Color(0xFFC62828),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            android.widget.Toast.makeText(
+                                context,
+                                "Erro: Essa funcionalidade requer um repositório com pelo menos 2 branches.",
+                                android.widget.Toast.LENGTH_LONG
+                            ).show()
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF24292F)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth().height(38.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text("Vincular Repositório do GitHub 🚀", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                    }
+                }
+            }
+        }
+
         // Backup statistics / Synced content view
         item {
             Text(
