@@ -1,0 +1,6 @@
+{
+  "name": "Assistente AI",
+  "description": "Diário pessoal e assistente inteligente integrado ao Gemini para gerar reflexões, responder perguntas e trazer insights diários.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
