@@ -98,6 +98,7 @@ fun MainDashboard(
 
     val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
     val isSuActive by viewModel.isSuActive.collectAsStateWithLifecycle()
+    val isRealRouting by viewModel.isRealRouting.collectAsStateWithLifecycle()
     val terminalLog by viewModel.terminalLog.collectAsStateWithLifecycle()
 
     val virtualRam by viewModel.virtualRam.collectAsStateWithLifecycle()
@@ -108,7 +109,28 @@ fun MainDashboard(
     val isVirtualSoundEnabled by viewModel.isVirtualSoundEnabled.collectAsStateWithLifecycle()
     val isPhysicalFullScreenEnabled by viewModel.isPhysicalFullScreenEnabled.collectAsStateWithLifecycle()
     val installedVirtualApps by viewModel.installedVirtualApps.collectAsStateWithLifecycle()
+    
+    // Google System Update state flows observed in UI
+    val androidVersion by viewModel.androidVersion.collectAsStateWithLifecycle()
+    val securityPatchLevel by viewModel.securityPatchLevel.collectAsStateWithLifecycle()
+    val lastCheckedUpdates by viewModel.lastCheckedUpdates.collectAsStateWithLifecycle()
+    val updateHistory by viewModel.updateHistory.collectAsStateWithLifecycle()
+    val updatesAvailable by viewModel.updatesAvailable.collectAsStateWithLifecycle()
+    val isCheckingUpdates by viewModel.isCheckingUpdates.collectAsStateWithLifecycle()
+    val isDownloadingUpdate by viewModel.isDownloadingUpdate.collectAsStateWithLifecycle()
+    val isInstallingUpdate by viewModel.isInstallingUpdate.collectAsStateWithLifecycle()
+    val updateProgress by viewModel.updateProgress.collectAsStateWithLifecycle()
+    val updateReadyToRestart by viewModel.updateReadyToRestart.collectAsStateWithLifecycle()
+    val pendingUpdateVersion by viewModel.pendingUpdateVersion.collectAsStateWithLifecycle()
+    val pendingPatchLevel by viewModel.pendingPatchLevel.collectAsStateWithLifecycle()
+    val updateStageText by viewModel.updateStageText.collectAsStateWithLifecycle()
+
+    val lastSavedTimestamp by viewModel.lastSavedTimestamp.collectAsStateWithLifecycle()
+    val isTutorialActive by viewModel.isTutorialActive.collectAsStateWithLifecycle()
+    val saveStatusMessage by viewModel.saveStatusMessage.collectAsStateWithLifecycle()
+
     var showHardwareDialog by remember { mutableStateOf(false) }
+    var showGoogleUpdateCenterDialog by remember { mutableStateOf(false) }
 
     var isNotificationShadeExpanded by remember { mutableStateOf(false) }
     var isUpgradingDevice by remember { mutableStateOf(false) }
@@ -130,6 +152,40 @@ fun MainDashboard(
     val view = androidx.compose.ui.platform.LocalView.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val window = (context as? android.app.Activity)?.window
+
+    val triggerGoogleOtaReboot = {
+        coroutineScope.launch {
+            showGoogleUpdateCenterDialog = false
+            showHardwareDialog = false
+            isNotificationShadeExpanded = false
+            isUpgradingDevice = true
+            upgradeProgress = 1.0f
+            upgradeStepText = "Preparando reinicialização dinâmica para aplicar atualização da Google..."
+            delay(1000)
+            
+            isUpgradingDevice = false
+            isRebooting = true
+            rebootStep = 0 // Black Screen reboot loop start
+            delay(1500)
+            
+            rebootStep = 1 // Android animated boot screen logo
+            delay(3000)
+            
+            rebootStep = 2 // System initialization setup and optimization
+            delay(2500)
+            
+            // Apply pending update states in viewModel
+            viewModel.applyPendingSystemUpdate()
+            
+            isRebooting = false
+            android.widget.Toast.makeText(
+                context,
+                "Sistema Android atualizado com sucesso! Versão e Patches em conformidade com Google OTA.",
+                android.widget.Toast.LENGTH_LONG
+            ).show()
+        }
+        Unit
+    }
 
     val onTriggerSoftwareUpdate = {
         coroutineScope.launch {
@@ -762,13 +818,16 @@ fun MainDashboard(
             }
         }
 
-        // 1. Premium Elegant Top App Header
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(premiumHeaderBrush)
-                .padding(horizontal = 20.dp, vertical = 16.dp)
-        ) {
+        if (!isLoggedIn) {
+            GoogleGmsSetupWizardScreen(viewModel = viewModel)
+        } else {
+            // 1. Premium Elegant Top App Header
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(premiumHeaderBrush)
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -874,48 +933,58 @@ fun MainDashboard(
                         )
                     }
 
-                    if (isLoggedIn) {
-                        // User Profile Button
-                        Box(
-                            modifier = Modifier
-                                .size(36.dp)
-                                .clip(CircleShape)
-                                .background(MaterialTheme.colorScheme.primary)
-                                .clickable { showProfileDialog = true }
-                                .testTag("button_profile"),
-                            contentAlignment = Alignment.Center
+                    // --- Save Progress Quick Button ---
+                    Surface(
+                        onClick = { viewModel.saveProgress() },
+                        shape = CircleShape,
+                        color = Color(0xFF1976D2).copy(alpha = 0.15f),
+                        border = CardDefaults.outlinedCardBorder(),
+                        modifier = Modifier.testTag("button_save_progress")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Text(
-                                text = "J",
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
+                            Text("💾", fontSize = 11.sp)
+                            Text("Salvar", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Color(0xFF1976D2))
                         }
-                    } else {
-                        // Sign-In with Google Mockup Button
-                        Surface(
-                            onClick = { showSignInGoogleDialog = true },
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = CardDefaults.outlinedCardBorder(),
-                            modifier = Modifier.testTag("button_sign_in_google")
+                    }
+
+                    // --- Interactive Tutorial Quick Button ---
+                    Surface(
+                        onClick = { viewModel.startTutorial() },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                        border = CardDefaults.outlinedCardBorder(),
+                        modifier = Modifier.testTag("button_open_tutorial")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                // G icon symbol multicolor mock
-                                Text("G", fontWeight = FontWeight.Black, color = Color(0xFF4285F4), fontSize = 12.sp)
-                                Text(
-                                    text = "Entrar",
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                            }
+                            Text("🎓", fontSize = 11.sp)
+                            Text("Tutorial", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
+                    }
+
+                    // User Profile Button (Always active - Login system removed)
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primary)
+                            .clickable { showProfileDialog = true }
+                            .testTag("button_profile"),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "J",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
                     }
                 }
             }
@@ -955,6 +1024,39 @@ fun MainDashboard(
                             tint = MaterialTheme.colorScheme.onErrorContainer
                         )
                     }
+                }
+            }
+        }
+
+        // Save status message banner
+        AnimatedVisibility(
+            visible = saveStatusMessage != null,
+            enter = expandVertically() + fadeIn(),
+            exit = shrinkVertically() + fadeOut()
+        ) {
+            Surface(
+                color = Color(0xFF1565C0),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(
+                        color = Color.White,
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Text(
+                        text = saveStatusMessage ?: "",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
@@ -1111,16 +1213,18 @@ fun MainDashboard(
                         onDismissInsight = { viewModel.clearInsight() }
                     )
                     1 -> ChatScreen(
+                        viewModel = viewModel,
                         messages = messages,
                         isAiLoading = isAiLoading,
                         onSendMessage = { viewModel.sendMessage(it) },
                         onClearHistory = { viewModel.clearChatHistory() }
                     )
                     2 -> PlayStoreScreen(viewModel = viewModel)
-                    3 -> ExportApkScreen(viewModel = viewModel)
+                    3 -> ExportApkScreen(viewModel = viewModel, onNavigateToPlayStore = { selectedTab = 2 })
                     4 -> NuvemCloudScreen(viewModel = viewModel)
                 }
             }
+        }
         }
     }
 
@@ -1137,12 +1241,41 @@ fun MainDashboard(
             onTogglePhysicalFullScreen = { viewModel.togglePhysicalFullScreen(it) },
             onDismiss = { showHardwareDialog = false },
             onTriggerSoftwareUpdate = { onTriggerSoftwareUpdate() },
+            androidVersion = androidVersion,
+            securityPatchLevel = securityPatchLevel,
+            onOpenGoogleUpdateCenter = {
+                showHardwareDialog = false
+                showGoogleUpdateCenterDialog = true
+            },
             onSave = { ram, storage, processor, volume, soundEnabled ->
                 viewModel.updateHardwareSpecs(ram, storage, processor)
                 viewModel.updateVirtualVolume(volume)
                 viewModel.toggleVirtualSound(soundEnabled)
                 showHardwareDialog = false
             }
+        )
+    }
+
+    // Google Android Virtual Update Center Dialog
+    if (showGoogleUpdateCenterDialog) {
+        GoogleUpdateCenterDialog(
+            androidVersion = androidVersion,
+            securityPatchLevel = securityPatchLevel,
+            lastChecked = lastCheckedUpdates,
+            history = updateHistory,
+            updatesAvailable = updatesAvailable,
+            isChecking = isCheckingUpdates,
+            isDownloading = isDownloadingUpdate,
+            isInstalling = isInstallingUpdate,
+            progress = updateProgress,
+            readyToRestart = updateReadyToRestart,
+            pendingVersion = pendingUpdateVersion,
+            pendingPatch = pendingPatchLevel,
+            updateStageText = updateStageText,
+            onCheckForUpdates = { viewModel.checkForUpdates() },
+            onDownloadInstall = { viewModel.downloadAndInstallUpdate() },
+            onReboot = { triggerGoogleOtaReboot() },
+            onDismiss = { showGoogleUpdateCenterDialog = false }
         )
     }
 
@@ -1154,6 +1287,14 @@ fun MainDashboard(
                 viewModel.addDiaryEntry(title, content, mood)
                 showAddDialog = false
             }
+        )
+    }
+
+    // Interactive Tutorial Modal Dialog
+    if (isTutorialActive) {
+        InteractiveTutorialDialog(
+            onDismiss = { viewModel.completeTutorial() },
+            onSelectTab = { selectedTab = it }
         )
     }
 
@@ -1190,10 +1331,766 @@ fun MainDashboard(
             terminalLog = terminalLog,
             isRootEnabled = isRootEnabled,
             isSuActive = isSuActive,
+            isRealRouting = isRealRouting,
+            onToggleRealRouting = { viewModel.toggleRealRouting(it) },
             onToggleRoot = { viewModel.toggleRoot(it) },
             onExecuteCommand = { viewModel.executeRootCommand(it) },
             onDismiss = { showRootDialog = false }
         )
+    }
+}
+
+@Composable
+fun GoogleGmsSetupWizardScreen(viewModel: DiaryViewModel) {
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+    
+    var tempEmail by remember { mutableStateOf("reisjuvenira468@gmail.com") }
+    var tempPassword by remember { mutableStateOf("••••••••") }
+    var isLoggingIn by remember { mutableStateOf(false) }
+    var stepMessage by remember { mutableStateOf("") }
+    var progressValue by remember { mutableStateOf(0f) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Top
+    ) {
+        Spacer(modifier = Modifier.height(20.dp))
+        
+        // Google Colorful Logo
+        Row(
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(bottom = 16.dp)
+        ) {
+            Text("G", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
+            Text("o", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA4335))
+            Text("o", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBC05))
+            Text("g", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
+            Text("l", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34A853))
+            Text("e", fontSize = 42.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA4335))
+        }
+
+        Text(
+            text = "Configuração do GMS & Nuvem 🌍",
+            fontSize = 22.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onBackground,
+            textAlign = TextAlign.Center
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
+        // Alerta de Login Obrigatório para o Celular Virtual
+        Surface(
+            color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f),
+            shape = RoundedCornerShape(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 8.dp),
+            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error)
+        ) {
+            Row(
+                modifier = Modifier.padding(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text("⚠️", fontSize = 24.sp)
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "LOGIN OBRIGATÓRIO REQUERIDO",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer
+                    )
+                    Text(
+                        text = "Conforme as políticas GMS e segurança do Android Virtual, você precisa entrar com sua conta Google para liberar o acesso ao sistema do Redmi 15.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
+                        lineHeight = 14.sp
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (isLoggingIn) {
+            // Elegant loading card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                ),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(
+                    modifier = Modifier.padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    CircularProgressIndicator(
+                        progress = progressValue,
+                        color = Color(0xFF4285F4),
+                        modifier = Modifier.size(56.dp),
+                        strokeWidth = 4.dp
+                    )
+                    
+                    Text(
+                        text = "Sincronizando...",
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    Text(
+                        text = stepMessage,
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.primary,
+                        textAlign = TextAlign.Center,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 8.dp)
+                    )
+                    
+                    LinearProgressIndicator(
+                        progress = progressValue,
+                        modifier = Modifier.fillMaxWidth().height(6.dp).clip(CircleShape),
+                        color = Color(0xFF34A853),
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                }
+            }
+        } else {
+            // Cloud syncing informative cards group
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                ),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "O que será salvo na sua conta do Google? ☁️",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+
+                    RestoreFeatureRow("🎮", "Jogos instalados", "Seus saves e recordações do Snake, Diário e Jogos AI.")
+                    RestoreFeatureRow("🛍️", "Google Play Store", "Lista de aplicativos instalados, downloads e sandbox seguros.")
+                    RestoreFeatureRow("📧", "Serviços Gmail & GMS", "E-mails, agenda, contatos virtuais e Google Play Protect ativo.")
+                    RestoreFeatureRow("📝", "Anotações do Diário", "Todas as suas postagens e insights da Inteligência AI preservados.")
+                    RestoreFeatureRow("🔒", "Segurança Total", "Restauração automática em caso de atualizações de sistema ou reboots.")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            // Text Inputs
+            OutlinedTextField(
+                value = tempEmail,
+                onValueChange = { tempEmail = it },
+                label = { Text("E-mail Google GMS") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Email, contentDescription = null, tint = Color(0xFF4285F4)) },
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            OutlinedTextField(
+                value = tempPassword,
+                onValueChange = { tempPassword = it },
+                label = { Text("Senha da Conta") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                leadingIcon = { Icon(Icons.Default.Lock, contentDescription = null, tint = Color(0xFFEA4335)) },
+                shape = RoundedCornerShape(12.dp)
+            )
+
+            Spacer(modifier = Modifier.height(24.dp))
+
+            Button(
+                onClick = {
+                    if (tempEmail.isBlank()) {
+                        Toast.makeText(context, "Por favor, digite seu e-mail do Google.", Toast.LENGTH_SHORT).show()
+                        return@Button
+                    }
+                    isLoggingIn = true
+                    coroutineScope.launch {
+                        stepMessage = "Iniciante handshake GMS v15.0..."
+                        progressValue = 0.1f
+                        delay(700)
+                        
+                        stepMessage = "Conectando ao núcleo de banco de dados do Google Drive..."
+                        progressValue = 0.3f
+                        delay(800)
+                        
+                        stepMessage = "Verificando token de segurança criptográfico..."
+                        progressValue = 0.5f
+                        delay(800)
+                        
+                        stepMessage = "Vinculando e-mail: $tempEmail..."
+                        progressValue = 0.7f
+                        delay(800)
+                        
+                        stepMessage = "Sincronizando aplicativos, jogos, Gmail e anotações..."
+                        progressValue = 0.9f
+                        delay(900)
+                        
+                        stepMessage = "Restaurando saves anteriores e instalando o Play Store..."
+                        progressValue = 1.0f
+                        delay(600)
+                        
+                        viewModel.loginWithGoogle()
+                        Toast.makeText(context, "Sincronização com o Google Cloud finalizada com sucesso!", Toast.LENGTH_LONG).show()
+                        isLoggingIn = false
+                    }
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF01875F)),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                Icon(Icons.Default.CloudSync, contentDescription = null, modifier = Modifier.size(18.dp), tint = Color.White)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("VINCULAR CONTA E LOGAR COM GOOGLE 🔐", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+fun RestoreFeatureRow(emoji: String, title: String, description: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(emoji, fontSize = 16.sp)
+        Column {
+            Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+            Text(description, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+fun GoogleUpdateCenterDialog(
+    androidVersion: String,
+    securityPatchLevel: String,
+    lastChecked: String,
+    history: List<String>,
+    updatesAvailable: String?,
+    isChecking: Boolean,
+    isDownloading: Boolean,
+    isInstalling: Boolean,
+    progress: Float,
+    readyToRestart: Boolean,
+    pendingVersion: String?,
+    pendingPatch: String?,
+    updateStageText: String,
+    onCheckForUpdates: () -> Unit,
+    onDownloadInstall: () -> Unit,
+    onReboot: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Dialog(onDismissRequest = { if (!isDownloading && !isInstalling) onDismiss() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .padding(8.dp),
+            shape = RoundedCornerShape(24.dp),
+            tonalElevation = 6.dp,
+            border = CardDefaults.outlinedCardBorder()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                // Header
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("🤖", fontSize = 22.sp)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Central Android (OTA Google)",
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                    IconButton(
+                        onClick = onDismiss, 
+                        enabled = !isDownloading && !isInstalling,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar")
+                    }
+                }
+
+                Text(
+                    text = "Central integrada de gerenciamento de atualizações do Google. Simule patch-days de segurança e updates de builds para as versões mais novas do ecossistema.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 15.sp
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+
+                // Main Update Status Section
+                Column(
+                    modifier = Modifier
+                        .weight(1f, fill = false)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    // System Info Grid Cards
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "VERSÃO DO SO",
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = androidVersion,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "PATCH SEGURANÇA",
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = securityPatchLevel.replace("-", "/"),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+
+                    // Checking / Installing / Downloading States
+                    if (isChecking) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2D3D))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                                Text(
+                                    text = updateStageText,
+                                    fontSize = 11.sp,
+                                    color = Color.White,
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+                    } else if (isDownloading || isInstalling) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF0F1A24))
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isDownloading) "Baixando atualização do sistema..." else "Instalando virtual...",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = "${(progress * 100).toInt()}%",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = Color(0xFF52C41A)
+                                    )
+                                }
+                                LinearProgressIndicator(
+                                    progress = { progress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = Color(0xFF52C41A)
+                                )
+                                Text(
+                                    text = updateStageText,
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFCEE3F6),
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                )
+                            }
+                        }
+                    } else if (readyToRestart) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0xFF132A13)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF52C41A))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "✓ Instalação Concluída (Segundo Plano)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 13.sp,
+                                    color = Color(0xFF52C41A)
+                                )
+                                Text(
+                                    text = "O sistema foi gravado no slot virtual paralelo. É necessário reiniciar o dispositivo fictício para inicializar a nova compilação com êxito.",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFD4EDDA)
+                                )
+                                Button(
+                                    onClick = onReboot,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF28A745)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(36.dp)
+                                ) {
+                                    Text("Reiniciar para Aplicar Atualização 🔄", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                    } else if (updatesAvailable != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0x334285F4)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4285F4))
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text("📢", fontSize = 16.sp)
+                                    Text(
+                                        text = updatesAvailable ?: "",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Color.White
+                                    )
+                                }
+                                Text(
+                                    text = "Disponibilizado oficialmente: ${pendingPatch?.replace("-", "/") ?: ""}\n" +
+                                           "Tamanho aproximado: ${if (updatesAvailable?.contains("Upgrade") == true) "2.4 GB - 3.1 GB" else "380 MB - 410 MB"}\n\n" +
+                                           "• $updateStageText",
+                                    fontSize = 11.sp,
+                                    color = Color(0xFFCEE3F6)
+                                )
+                                Button(
+                                    onClick = onDownloadInstall,
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(36.dp)
+                                ) {
+                                    Text("Baixar e Instalar em Segundo Plano 🚀", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+                    } else {
+                        // Fully updated state
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = CardDefaults.cardColors(containerColor = Color(0x1110B981)),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(14.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Text("✅", fontSize = 24.sp)
+                                Column {
+                                    Text(
+                                        text = "Google Android atualizado!",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 13.sp,
+                                        color = Color.White
+                                    )
+                                    Text(
+                                        text = lastChecked,
+                                        fontSize = 10.sp,
+                                        color = Color(0xFF10B981)
+                                    )
+                                }
+                            }
+                        }
+
+                        Button(
+                            onClick = onCheckForUpdates,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(38.dp)
+                        ) {
+                            Text("Verificar Atualizações 🔍", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(1.dp)
+                            .background(MaterialTheme.colorScheme.outlineVariant)
+                    )
+
+                    // History Section
+                    Text(
+                        text = "HISTÓRICO DE ATUALIZAÇÕES INSTALADAS",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.15f)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            if (history.isEmpty()) {
+                                Text(
+                                    text = "Nenhum histórico disponível.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                history.reversed().forEach { log ->
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Text("📦", fontSize = 11.sp)
+                                        Text(
+                                            text = log,
+                                            fontSize = 10.sp,
+                                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun GeminiSettingsDialog(
+    currentApiKey: String,
+    currentPrompt: String,
+    onSave: (String, String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var apiKeyText by remember { mutableStateOf(currentApiKey) }
+    var promptText by remember { mutableStateOf(currentPrompt) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .padding(8.dp),
+            shape = RoundedCornerShape(24.dp),
+            tonalElevation = 6.dp,
+            border = CardDefaults.outlinedCardBorder()
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Configuração do Gemini ⚙️",
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar")
+                    }
+                }
+
+                Text(
+                    text = "Ajuste as chaves de API e mude a personalidade (Prompt de Instruções) padrão da Inteligência Artificial do celular virtual.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 15.sp
+                )
+
+                // API Key input
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Chave de API do Gemini (Token)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    OutlinedTextField(
+                        value = apiKeyText,
+                        onValueChange = { apiKeyText = it },
+                        placeholder = { Text("Preenchido por padrão do AI Studio...", fontSize = 11.sp) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp, fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Text(
+                        text = "Se deixar vazio, o app usará automaticamente a Chave de API integrada no painel Secrets do AI Studio.",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        lineHeight = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+
+                // Prompt do Gemini input
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = "Prompt do Gemini (Instruções Principais)",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    OutlinedTextField(
+                        value = promptText,
+                        onValueChange = { promptText = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(130.dp),
+                        textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                        maxLines = 6,
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                    Text(
+                        text = "Esse prompt molda o comportamento, as saídas e as regras da Inteligência Artificial do Diário Inteligente.",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        lineHeight = 12.sp,
+                        modifier = Modifier.padding(start = 4.dp)
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            // Reset prompt back to default
+                            promptText = "Você é o 'Guia', um assistente virtual e diário inteligente que ajuda o usuário a organizar pensamentos, manter hábitos produtivos e refletir sobre a vida. Seja encorajador, caloroso, direto e prestativo. Use emojis de forma moderada e estilosa. Escreva sempre em português do Brasil e com excelente diagramação de texto (use tópicos ou quebras de linhas quando apropriado, e negrito)."
+                            apiKeyText = ""
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1.5f)
+                    ) {
+                        Text("Resetar Padrão", fontSize = 10.sp)
+                    }
+
+                    Button(
+                        onClick = {
+                            onSave(apiKeyText.trim(), promptText.trim())
+                            onDismiss()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1.8f)
+                    ) {
+                        Text("Salvar Ajustes ✔️", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1510,8 +2407,8 @@ fun UserProfileDialog(
 
                         Text(
                             text = if (isRootEnabled) 
-                                "Acesso de administração root ATIVADO simuladamente no dispositivo para fins de testes." 
-                                else "Habilite para simular permissões root de superusuário e acessar comandos shell privilegiados.",
+                                "Acesso de administração root ATIVADO de verdade! Digite qualquer comando do Linux/Android no shell terminal." 
+                                else "Habilite para ativar privilégios de superusuário e acessar o shell Linux real no terminal.",
                             fontSize = 11.sp,
                             color = if (isRootEnabled) Color(0xFFE8F5E9) else MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 15.sp
@@ -1573,6 +2470,8 @@ fun AndroidRootTerminalDialog(
     terminalLog: List<String>,
     isRootEnabled: Boolean,
     isSuActive: Boolean,
+    isRealRouting: Boolean,
+    onToggleRealRouting: (Boolean) -> Unit,
     onToggleRoot: (Boolean) -> Unit,
     onExecuteCommand: (String) -> Unit,
     onDismiss: () -> Unit
@@ -1635,11 +2534,12 @@ fun AndroidRootTerminalDialog(
                     }
                 }
 
-                // Interactive Quick Toggles in terminal via Custom Boxes
+                // Interactive Quick Toggles in terminal via Custom Boxes (Scrollable)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 10.dp),
+                        .padding(bottom = 10.dp)
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -1659,53 +2559,86 @@ fun AndroidRootTerminalDialog(
                         )
                     }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF162335))
-                            .clickable { onExecuteCommand("su") }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "su",
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF91CAFF)
-                        )
-                    }
+                    val buttons = listOf(
+                        "su" to Color(0xFF91CAFF),
+                        "roteamento" to Color(0xFFFFD591),
+                        "magisk" to Color(0xFFB7EB8F),
+                        "kernelsu" to Color(0xFFFFA39E),
+                        "iptables" to Color(0xFFFFC069),
+                        "neofetch" to Color(0xFFD3ADF7),
+                        "help" to Color(0xFFCEE3F6)
+                    )
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF162335))
-                            .clickable { onExecuteCommand("neofetch") }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = "neofetch",
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFD3ADF7)
-                        )
+                    buttons.forEach { (cmd, color) ->
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(Color(0xFF162335))
+                                .clickable { onExecuteCommand(cmd) }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = cmd,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = color
+                            )
+                        }
                     }
+                }
 
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(Color(0xFF162335))
-                            .clickable { onExecuteCommand("help") }
-                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                // Real Gateway Routing Status Bar
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF141F2E))
+                        .border(1.dp, Color(0xFF1E2D3D), RoundedCornerShape(8.dp))
+                        .clickable { onToggleRealRouting(!isRealRouting) }
+                        .padding(vertical = 8.dp, horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Text(
-                            text = "help",
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFFCEE3F6)
+                            text = if (isRealRouting) "🔌" else "❌",
+                            fontSize = 14.sp
                         )
+                        Column {
+                            Text(
+                                text = "Roteamento Físico de Root (Gateway)",
+                                color = Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = if (isRealRouting) "Ativo via tun0 (192.168.15.100) -> 10.0.2.15" 
+                                       else "Inativo (Apenas sandbox local)",
+                                color = if (isRealRouting) Color(0xFF52C41A) else Color(0xFF8C9BA5),
+                                fontSize = 8.sp,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                            )
+                        }
                     }
+                    
+                    Text(
+                        text = if (isRealRouting) "ROTEADO" else "SEM ROTA",
+                        color = if (isRealRouting) Color(0xFF52C41A) else Color(0xFFF5222D),
+                        fontSize = 8.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier = Modifier
+                            .background(
+                                if (isRealRouting) Color(0xFF132A13) else Color(0xFF2C1D21),
+                                RoundedCornerShape(4.dp)
+                            )
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
                 }
 
                 // Console Window Output
@@ -1729,9 +2662,10 @@ fun AndroidRootTerminalDialog(
                             Text(
                                 text = line,
                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                color = if (line.startsWith(">>") || line.contains("[SUCESSO]")) Color(0xFF52C41A)
+                                color = if (line.startsWith(">>") || line.contains("[SUCESSO]") || line.contains("[SUCCESS]") || line.contains("Sucesso") || line.contains("[SYSTEMLESS]")) Color(0xFF52C41A)
                                         else if (line.startsWith("guest") || line.startsWith("root") || line.startsWith("$") || line.startsWith("#")) Color(0xFF1890FF)
-                                        else if (line.contains("PERIGO") || line.contains("Negado")) Color(0xFFF5222D)
+                                        else if (line.startsWith("[ROUTING]") || line.startsWith("===")) Color(0xFFFA8C16)
+                                        else if (line.contains("PERIGO") || line.contains("Negado") || line.contains("DROP") || line.contains("DROP")) Color(0xFFF5222D)
                                         else Color(0xFFCEE3F6),
                                 fontSize = 11.sp,
                                 modifier = Modifier.fillMaxWidth()
@@ -2268,11 +3202,16 @@ fun getMoodVisualProps(mood: String): Pair<String, Color> {
 
 @Composable
 fun ChatScreen(
+    viewModel: DiaryViewModel,
     messages: List<ChatMessage>,
     isAiLoading: Boolean,
     onSendMessage: (String) -> Unit,
     onClearHistory: () -> Unit
 ) {
+    val customGeminiApiKey by viewModel.customGeminiApiKey.collectAsStateWithLifecycle()
+    val customGeminiPrompt by viewModel.customGeminiPrompt.collectAsStateWithLifecycle()
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
     var chatInputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -2304,12 +3243,28 @@ fun ChatScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "Conversa recente",
-                fontSize = 13.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Conversa recente",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(
+                    onClick = { showSettingsDialog = true },
+                    modifier = Modifier.size(24.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Configurar Gemini",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
 
             TextButton(
                 onClick = onClearHistory,
@@ -2319,6 +3274,18 @@ fun ChatScreen(
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Limpar chat", fontSize = 11.sp, fontWeight = FontWeight.Bold)
             }
+        }
+
+        // Gemini Settings Modal Dialog
+        if (showSettingsDialog) {
+            GeminiSettingsDialog(
+                currentApiKey = customGeminiApiKey,
+                currentPrompt = customGeminiPrompt,
+                onDismiss = { showSettingsDialog = false },
+                onSave = { apiKey, prompt ->
+                    viewModel.updateGeminiSettings(apiKey, prompt)
+                }
+            )
         }
 
         // Suggestions horizontal row
@@ -2658,7 +3625,7 @@ fun AddEntryDialog(
 }
 
 @Composable
-fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
+fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel, onNavigateToPlayStore: () -> Unit = {}) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val installedApps by viewModel.installedVirtualApps.collectAsStateWithLifecycle()
     val isRootEnabled by viewModel.isRootEnabled.collectAsStateWithLifecycle()
@@ -2668,6 +3635,11 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
     val antivirusRemovedApps by viewModel.antivirusRemovedApps.collectAsStateWithLifecycle()
 
     var showAntivirusDialog by remember { mutableStateOf(false) }
+    var showBitdefenderDialog by remember { mutableStateOf(false) }
+    var bitdefenderScanning by remember { mutableStateOf(false) }
+    var bitdefenderScanProgress by remember { mutableStateOf(0) }
+    var bitdefenderScanMessage by remember { mutableStateOf("") }
+    var bitdefenderLastScanResult by remember { mutableStateOf("Nenhum escaneamento completo realizado nesta sessão.") }
 
     var customUrl by remember { mutableStateOf("") }
     var inputError by remember { mutableStateOf<String?>(null) }
@@ -2688,6 +3660,61 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
     var selectedAppToAnalyze by remember { mutableStateOf<TargetApk?>(null) }
     var analysisStep by remember { mutableStateOf(0) } // 0 = None, 1 = Scanning, 2 = Finished Analysis
     var analysisProgressMessage by remember { mutableStateOf("") }
+
+    // Estado do Explorador USB / Celular Físico Simulado
+    var showPhysicalExplorerDialog by remember { mutableStateOf(false) }
+    var customApkNameInput by remember { mutableStateOf("") }
+    var customApkSizeInput by remember { mutableStateOf("45") }
+    var customApkRiskInput by remember { mutableStateOf("Seguro") } // "Seguro", "Médio-Alto", "Crítico (Malware)"
+    var customApkEmojiInput by remember { mutableStateOf("🎮") }
+
+    var simulatedPhysicalApksList by remember {
+        mutableStateOf(
+            listOf(
+                TargetApk(
+                    name = "WhatsApp_Oficial_v2.24.12.apk",
+                    category = "Comunicação / Chat",
+                    url = "physical://storage/downloads/whatsapp.apk",
+                    emoji = "💬💚",
+                    desc = "Cópia exportada extraída da pasta do WhatsApp do seu celular real.",
+                    riskScore = 5,
+                    riskLevel = "Seguro (Assinatura Confiável)",
+                    detailDesc = "Código e assinatura correspondentes aos servidores oficiais da Meta. Sem ameaças detectadas."
+                ),
+                TargetApk(
+                    name = "Subway_Surfers_Dinheiro_Infinito.apk",
+                    category = "Jogo Modificado / Offline",
+                    url = "physical://storage/jogos/subway_mod.apk",
+                    emoji = "🏃‍♂️🛹",
+                    desc = "Arquivo contendo mod de moedas e chaves infinitas do seu celular real.",
+                    riskScore = 55,
+                    riskLevel = "Médio-Alto (Modificado)",
+                    detailDesc = "Assinatura alterada para possibilitar trapaças no jogo. Sem vírus ou hooks de rede ofensivos."
+                ),
+                TargetApk(
+                    name = "Minecraft_Pocket_Edition_Gratis.apk",
+                    category = "Aventura / Sandbox",
+                    url = "physical://storage/jogos/minecraft.apk",
+                    emoji = "🟩🧱",
+                    desc = "Instalador grátis de jogo pago obtido externamente no aparelho real.",
+                    riskScore = 15,
+                    riskLevel = "Seguro (Verificação Heurística)",
+                    detailDesc = "Assinatura de terceiros limpa. Funciona estavelmente sem requisição de acessos abusivos."
+                ),
+                TargetApk(
+                    name = "Fisico_Trojan_BankBot.apk",
+                    category = "Capturador de Senhas / Spyware Bancário",
+                    url = "physical://storage/documents/malware_test.apk",
+                    emoji = "🛑🏴‍☠️",
+                    desc = "Alerta de segurança: arquivo malicioso presente no armazenamento do celular real.",
+                    riskScore = 95,
+                    riskLevel = "Crítico (Malware)",
+                    detailDesc = "Spyware perigoso detectado! Tenta capturar dados digitados em aplicativos e roubar dados bancários bancários.",
+                    requiresDoubleConfirm = true
+                )
+            )
+        )
+    }
 
     // Double confirmation for Malware Bypass
     var rootMalwareBypassChecked by remember { mutableStateOf(false) }
@@ -2780,6 +3807,85 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
         }
     }
 
+    // Permissão e Seleção de Arquivo Físico
+    var isStoragePermissionGranted by remember {
+        mutableStateOf(
+            if (android.os.Build.VERSION.SDK_INT >= 33) {
+                // No Android 13+ (SDK 33+), o seletor de arquivos do sistema (GetContent) gerencia permissões de forma automática e segura.
+                true
+            } else if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                context.checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE) == android.content.pm.PackageManager.PERMISSION_GRANTED
+            } else {
+                true
+            }
+        )
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        isStoragePermissionGranted = isGranted
+        if (isGranted) {
+            android.widget.Toast.makeText(context, "Permissão de pastas concedida com sucesso! ✓", android.widget.Toast.LENGTH_SHORT).show()
+        } else {
+            android.widget.Toast.makeText(context, "Permissão de pastas negada pelo usuário.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
+
+    fun getFileName(uri: android.net.Uri): String {
+        var result: String? = null
+        if (uri.scheme == "content") {
+            try {
+                val cursor = context.contentResolver.query(uri, null, null, null, null)
+                cursor?.use {
+                    if (it.moveToFirst()) {
+                        val index = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                        if (index != -1) {
+                            result = it.getString(index)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+        if (result == null) {
+            result = uri.path
+            val cut = result?.lastIndexOf('/') ?: -1
+            if (cut != -1) {
+                result = result?.substring(cut + 1)
+            }
+        }
+        return result ?: "App_Selecionado.apk"
+    }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: android.net.Uri? ->
+        if (uri != null) {
+            val fileName = getFileName(uri)
+            val cleanedName = if (fileName.endsWith(".apk", ignoreCase = true)) {
+                fileName.substringBeforeLast(".apk")
+            } else {
+                fileName
+            }
+            startAnalysisFlow(
+                TargetApk(
+                    name = "$cleanedName (Celular Físico)",
+                    category = "Aplicativo do Armazenamento Host",
+                    url = uri.toString(),
+                    emoji = "📲💾",
+                    desc = "Aplicativo carregado em tempo real a partir da memória do telefone físico / hospedeiro.",
+                    riskScore = 12,
+                    riskLevel = "Seguro (Assinatura Local)",
+                    detailDesc = "Nenhuma ameaça encontrada. Assinatura do instalador gerada no ambiente seguro do sandbox virtual."
+                )
+            )
+        } else {
+            android.widget.Toast.makeText(context, "Nenhum arquivo APK selecionado.", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -2825,6 +3931,131 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             lineHeight = 15.sp
                         )
+                    }
+                }
+            }
+        }
+
+        // Card de Conexão com o Celular Físico (Importador/Instalador de APK)
+        item {
+            Card(
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                ),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.3f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primary),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("📲", fontSize = 24.sp, color = MaterialTheme.colorScheme.onPrimary)
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Instalar APK do Celular Físico (Hospedeiro)",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Acesse e selecione arquivos APK locais do seu celular real para rodar segurança sandbox no celular virtual.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+
+                    // Permission indicator status badge
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isStoragePermissionGranted) Color(0xFFE8F5E9) else Color(0xFFFFF3E0)
+                            )
+                            .border(
+                                androidx.compose.foundation.BorderStroke(
+                                    1.dp,
+                                    if (isStoragePermissionGranted) Color(0xFF81C784).copy(alpha = 0.6f) else Color(0xFFFFB74D).copy(alpha = 0.6f)
+                                )
+                            )
+                            .padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(if (isStoragePermissionGranted) "✓" else "💡", fontSize = 14.sp, color = if (isStoragePermissionGranted) Color(0xFF2E7D32) else Color(0xFFE65100))
+                            Column {
+                                Text(
+                                    text = if (isStoragePermissionGranted) "Permissão / Acesso: Autorizado pelo Sistema" else "Seletor de arquivos ativo",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (isStoragePermissionGranted) Color(0xFF2E7D32) else Color(0xFFE65100)
+                                )
+                                Text(
+                                    text = if (isStoragePermissionGranted) "O emulador virtual está pronto para receber arquivos APK selecionados do seu celular real." else "Você pode tocar diretamente em 'Procurar APK' para carregar arquivos do seu celular.",
+                                    fontSize = 10.sp,
+                                    color = if (isStoragePermissionGranted) Color(0xFF1B5E20) else Color(0xFF5D4037)
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (!isStoragePermissionGranted) {
+                            Button(
+                                onClick = {
+                                    if (android.os.Build.VERSION.SDK_INT >= 33) {
+                                        android.widget.Toast.makeText(context, "Sistemas modernos (Android 13+) não exigem mais permissões manuais de armazenamento para o seletor. Já está ativo! ✓", android.widget.Toast.LENGTH_LONG).show()
+                                        isStoragePermissionGranted = true
+                                    } else {
+                                        permissionLauncher.launch(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                                    }
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.weight(1f).height(38.dp),
+                                contentPadding = PaddingValues(0.dp)
+                            ) {
+                                Text("Liberar Acesso 🔌", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                showPhysicalExplorerDialog = true
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF01875F)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1.2f).height(38.dp),
+                            contentPadding = PaddingValues(0.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("Procurar APK / Pastas 📂", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            }
+                        }
                     }
                 }
             }
@@ -3113,13 +4344,17 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
                                     .size(36.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .background(
-                                        if (app == "Google Antivírus") Color(0xFFE8F5E9)
+                                        if (app == "Google Play Store") Color(0xFFE3F2FD)
+                                        else if (app == "Google Antivírus") Color(0xFFE8F5E9)
+                                        else if (app.contains("Bitdefender")) Color(0xFFFFEBEE)
                                         else MaterialTheme.colorScheme.secondaryContainer
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Text(
                                     if (app == "Google Antivírus") "🛡️"
+                                    else if (app == "Google Play Store") "🛍️"
+                                    else if (app.contains("Bitdefender")) "🛡️"
                                     else if (app.contains("Trojan")) "🛑"
                                     else if (app.contains("PGSharp")) "⚡"
                                     else "📦",
@@ -3130,10 +4365,12 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
                                 Text(app, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                                 Text(
                                     text = if (app == "Google Antivírus") "Status: Protegido com Inteligência AI"
+                                    else if (app == "Google Play Store") "Loja Oficial de Apps Otimizada"
+                                    else if (app.contains("Bitdefender")) "Status: Proteção Ativa & Antivírus"
                                     else if (app.contains("Trojan")) "Risco Crítico! Trojans Ativos - Remova"
                                     else "Status: Instalado e Ativo em Sandbox",
                                     fontSize = 10.sp,
-                                    color = if (app == "Google Antivírus") Color(0xFF2E7D32)
+                                    color = if (app == "Google Antivírus" || app == "Google Play Store" || app.contains("Bitdefender")) Color(0xFF2E7D32)
                                     else if (app.contains("Trojan")) Color(0xFFC62828)
                                     else Color(0xFF01875F)
                                 )
@@ -3148,6 +4385,29 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
                                 Button(
                                     onClick = { showAntivirusDialog = true },
                                     colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("ABRIR 🚀", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            } else if (app.contains("Bitdefender")) {
+                                Button(
+                                    onClick = { showBitdefenderDialog = true },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(28.dp)
+                                ) {
+                                    Text("ABRIR 🚀", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            } else if (app == "Google Play Store") {
+                                Button(
+                                    onClick = {
+                                        onNavigateToPlayStore()
+                                        Toast.makeText(context, "Abrindo a Google Play Store Oficial...", Toast.LENGTH_SHORT).show()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF01875F)),
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                                     modifier = Modifier.height(28.dp)
@@ -3345,6 +4605,312 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
                                     Text("Prosseguir Instalação ⚠️", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                 }
                             }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPhysicalExplorerDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { showPhysicalExplorerDialog = false }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .fillMaxHeight(0.85f)
+                    .padding(4.dp),
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(16.dp)
+                ) {
+                    // Header title row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🔌", fontSize = 24.sp)
+                            Column {
+                                Text(
+                                    text = "Explorador USB do Celular Real",
+                                    fontSize = 15.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Armazenamento Físico do Hospedeiro",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(onClick = { showPhysicalExplorerDialog = false }) {
+                            Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Fechar")
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // Scrollable Area
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        // Explanatory info box
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f)
+                            ),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "💡 Ponte Inteligente Simulada",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Como você está acessando no modo web (Nuvem), as restrições evitam ler as pastas privadas do aparelho diretamente. Use esta ponte de simulação inteligente para carregar APKs rápidos ou criar novos testes personalizados de vírus!",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+
+                        // Section 1: Simulated folders and APK files
+                        Text(
+                            text = "📁 Pastas do Celular Real (.apk)",
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        simulatedPhysicalApksList.forEach { apk ->
+                            Card(
+                                shape = RoundedCornerShape(12.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(38.dp)
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .background(MaterialTheme.colorScheme.surface),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(apk.emoji, fontSize = 20.sp)
+                                    }
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = apk.name,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${apk.category} • ${apk.riskLevel}",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (apk.riskScore > 75) Color(0xFFC62828) else if (apk.riskScore > 30) Color(0xFFE65100) else Color(0xFF2E7D32)
+                                        )
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            showPhysicalExplorerDialog = false
+                                            startAnalysisFlow(apk)
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF01875F)),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Text("Exportar 📲", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                    }
+                                }
+                            }
+                        }
+
+                        // Section 2: Create custom app on physical phone
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Text("🛠️", fontSize = 14.sp)
+                                    Text(
+                                        text = "Cadastrar APK do meu Celular Físico",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+
+                                Text(
+                                    text = "Digite qualquer nome de APK (ex: Minecraft, WhatsApp Mod, Jogo Hack). Ele será criado instantaneamente no seu celular host pronto para exportar!",
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                OutlinedTextField(
+                                    value = customApkNameInput,
+                                    onValueChange = { customApkNameInput = it },
+                                    placeholder = { Text("Ex: Fortnite_Mod_2026.apk", fontSize = 11.sp) },
+                                    label = { Text("Nome do Aplicativo", fontSize = 10.sp) },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    OutlinedTextField(
+                                        value = customApkEmojiInput,
+                                        onValueChange = { customApkEmojiInput = it },
+                                        label = { Text("Emoji ícone", fontSize = 10.sp) },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(8.dp),
+                                        modifier = Modifier.width(80.dp)
+                                    )
+
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text("Nível de Risco/Vírus:", fontSize = 9.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        ) {
+                                            listOf("Seguro", "Modificado", "Vírus").forEach { type ->
+                                                val isSelected = customApkRiskInput == type
+                                                val bgTypeColor = when (type) {
+                                                    "Seguro" -> Color(0xFFE8F5E9)
+                                                    "Modificado" -> Color(0xFFFFF3E0)
+                                                    else -> Color(0xFFFDE8E8)
+                                                }
+                                                val textTypeColor = when (type) {
+                                                    "Seguro" -> Color(0xFF2E7D32)
+                                                    "Modificado" -> Color(0xFFE65100)
+                                                    else -> Color(0xFFC62828)
+                                                }
+                                                Surface(
+                                                    onClick = { customApkRiskInput = type },
+                                                    shape = RoundedCornerShape(6.dp),
+                                                    color = if (isSelected) bgTypeColor else MaterialTheme.colorScheme.surfaceVariant,
+                                                    border = androidx.compose.foundation.BorderStroke(1.dp, if (isSelected) textTypeColor else Color.Transparent),
+                                                    modifier = Modifier.clickable { customApkRiskInput = type }
+                                                ) {
+                                                    Text(
+                                                        text = type,
+                                                        fontSize = 9.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = if (isSelected) textTypeColor else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp)
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Button(
+                                    onClick = {
+                                        if (customApkNameInput.isBlank()) {
+                                            Toast.makeText(context, "Por favor, digite o nome do APK!", Toast.LENGTH_SHORT).show()
+                                        } else {
+                                            val nameWithExtension = if (customApkNameInput.endsWith(".apk", ignoreCase = true)) {
+                                                customApkNameInput
+                                            } else {
+                                                "$customApkNameInput.apk"
+                                            }
+
+                                            val riskScore = when (customApkRiskInput) {
+                                                "Seguro" -> 2
+                                                "Modificado" -> 45
+                                                else -> 98
+                                            }
+
+                                            val riskLevel = when (customApkRiskInput) {
+                                                "Seguro" -> "Seguro (Assinatura Confiável)"
+                                                "Modificado" -> "Médio-Alto (Modificado)"
+                                                else -> "Crítico (Malware)"
+                                            }
+
+                                            val detailDesc = when (customApkRiskInput) {
+                                                "Seguro" -> "A assinatura digital do arquivo local corresponde a uma chave pública autenticada."
+                                                "Modificado" -> "Certificado customizado detectado. Bytecode adulterado para liberar recursos extras, livre de spam ou rootkits agressivos."
+                                                else -> "Ameaça crítica detectada pelo robô do Play Protect! O arquivo contém rotinas de injeção remota e tenta contornar os sistemas de isolamento."
+                                            }
+
+                                            val createdApk = TargetApk(
+                                                name = nameWithExtension,
+                                                category = "Aplicativo Customizado do Telefone",
+                                                url = "physical://storage/custom/$nameWithExtension",
+                                                emoji = customApkEmojiInput.ifBlank { "📦" },
+                                                desc = "Aplicativo criado pelo usuário a partir do armazenamento do celular físico.",
+                                                riskScore = riskScore,
+                                                riskLevel = riskLevel,
+                                                detailDesc = detailDesc,
+                                                requiresDoubleConfirm = customApkRiskInput == "Vírus"
+                                            )
+
+                                            simulatedPhysicalApksList = simulatedPhysicalApksList + createdApk
+                                            Toast.makeText(context, "Novo APK '$nameWithExtension' salvo na memória física simulada! 🎉", Toast.LENGTH_LONG).show()
+                                            customApkNameInput = "" // reset
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth().height(36.dp)
+                                ) {
+                                    Text("Gravar APK no Armazenamento Física 💾", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                            }
+                        }
+
+                        // Section 3: Native backup trigger
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    showPhysicalExplorerDialog = false
+                                    filePickerLauncher.launch("*/*")
+                                }
+                                .padding(vertical = 6.dp)
+                        ) {
+                            Text("📁", fontSize = 18.sp)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Usar Seletor Nativo do Celular", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                Text("Abre as pastas reais do dispositivo caso o app esteja rodando instalado no aparelho celular físico verdadeiramente.", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Text("➜", fontSize = 14.sp)
                         }
                     }
                 }
@@ -3576,6 +5142,235 @@ fun ExportApkScreen(viewModel: com.example.ui.DiaryViewModel) {
             }
         }
     }
+
+    if (showBitdefenderDialog) {
+        androidx.compose.ui.window.Dialog(onDismissRequest = { 
+            showBitdefenderDialog = false 
+            bitdefenderScanning = false
+        }) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .padding(8.dp),
+                shape = RoundedCornerShape(24.dp),
+                tonalElevation = 8.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFC62828).copy(alpha = 0.5f))
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Header title row
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("🛡️", fontSize = 24.sp)
+                            Column {
+                                Text(
+                                    text = "Bitdefender Mobile Security",
+                                    fontSize = 16.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFFC62828)
+                                )
+                                Text(
+                                    text = "Proteção Avançada para o Virtual Redmi 15",
+                                    fontSize = 9.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(onClick = { 
+                            showBitdefenderDialog = false 
+                            bitdefenderScanning = false
+                        }) {
+                            Icon(androidx.compose.material.icons.Icons.Default.Close, contentDescription = "Fechar")
+                        }
+                    }
+
+                    androidx.compose.material3.HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    if (bitdefenderScanning) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            CircularProgressIndicator(color = Color(0xFFC62828), modifier = Modifier.size(50.dp))
+                            Text(
+                                text = "Varrendo bytecode e recursos no sandbox...",
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = bitdefenderScanMessage,
+                                fontSize = 11.sp,
+                                color = Color(0xFFC62828),
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                            
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = bitdefenderScanProgress / 100f,
+                                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(3.dp)),
+                                color = Color(0xFFC62828)
+                            )
+                            Text(
+                                text = "$bitdefenderScanProgress%",
+                                fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            // Active Shield Card
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = Color(0xFFE8F5E9),
+                                modifier = Modifier.fillMaxWidth(),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2E7D32).copy(alpha = 0.5f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Text("⚡", fontSize = 28.sp)
+                                    Column {
+                                        Text(
+                                            text = "AUTOPILOT: PROTEÇÃO ATIVA",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = Color(0xFF2E7D32)
+                                        )
+                                        Text(
+                                            text = "Seu ambiente virtual Redmi 15 está 100% blindado por assinaturas cibernéticas em tempo real.",
+                                            fontSize = 10.sp,
+                                            color = Color(0xFF2E7D32).copy(alpha = 0.85f),
+                                            lineHeight = 14.sp
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Text(
+                                text = "RECURSOS INTEGRADOS DO BITDEFENDER:",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            // List of features
+                            val features = listOf(
+                                "🛡️ Verificação de Malware Heurística por IA" to "Checa vulnerabilidades e atividades suspeitas na memória virtual.",
+                                "🌐 Proteção Web do Navegador" to "Bloqueia tentativas de phishing e ataques aos dados e credenciais.",
+                                "🔑 VPN Ultrarrápida Embutida" to "Conexão sandbox 100% criptografada e segura.",
+                                "🔒 Bloqueio de Apps & Privacidade" to "Garante que malware local não leia recursos privados do usuário."
+                            )
+
+                            features.forEach { (title, desc) ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    verticalAlignment = Alignment.Top
+                                ) {
+                                    Text(text = "✓", color = Color(0xFFC62828), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Column {
+                                        Text(text = title, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text(text = desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(4.dp))
+
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    Text(
+                                        text = "ÚLTIMO ESCANEAMENTO:",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 10.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = bitdefenderLastScanResult,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        lineHeight = 15.sp
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Button(
+                                    onClick = {
+                                        bitdefenderScanning = true
+                                        bitdefenderScanProgress = 0
+                                        coroutineScope.launch {
+                                            val scanSteps = listOf(
+                                                "Descompactando banco de dados de ameaças...",
+                                                "Indexando e buscando pacotes sandbox ativos...",
+                                                "Analisando arquivos na pasta Aurora Store...",
+                                                "Lendo banco de dados Room persistente local...",
+                                                "Varrendo bytecode executável do sandbox virtual...",
+                                                "Varredura Heurística em tempo real concluída!"
+                                            )
+                                            for (i in 1..100) {
+                                                delay(25)
+                                                bitdefenderScanProgress = i
+                                                val stepIdx = ((i - 1) * scanSteps.size) / 100
+                                                if (stepIdx < scanSteps.size) {
+                                                    bitdefenderScanMessage = scanSteps[stepIdx]
+                                                }
+                                            }
+                                            bitdefenderScanning = false
+                                            bitdefenderLastScanResult = "Verificação completa finalizada com sucesso! 18 pacotes verificados. 0 ameaças encontradas de forma proativa. O sistema virtual está 100% livre de malware."
+                                            Toast.makeText(context, "Varredura Bitdefender completa! 0 vírus detectados.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828)),
+                                    modifier = Modifier.weight(1.2f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("ESCANEAR AGORA 🧹", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                }
+                                OutlinedButton(
+                                    onClick = { 
+                                        showBitdefenderDialog = false 
+                                    },
+                                    modifier = Modifier.weight(0.8f),
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("Fechar", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
@@ -3722,152 +5517,82 @@ fun NuvemCloudScreen(viewModel: com.example.ui.DiaryViewModel) {
                         color = MaterialTheme.colorScheme.onSurface
                     )
 
-                    if (isLoggedIn) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(44.dp)
-                                    .clip(CircleShape)
-                                    .background(Color(0xFF1976D2).copy(alpha = 0.2f)),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = (userName ?: "J").take(1).uppercase(),
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 18.sp,
-                                    color = Color(0xFF1976D2)
-                                )
-                            }
-
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = userName ?: "Juvenira Reis",
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                                Text(
-                                    text = userEmail ?: "reisjuvenira468@gmail.com",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(0xFFE8F5E9),
-                                modifier = Modifier.padding(start = 4.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .size(6.dp)
-                                            .clip(CircleShape)
-                                            .background(Color(0xFF2E7D32))
-                                    )
-                                    Text(
-                                        text = "Logado",
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        color = Color(0xFF2E7D32)
-                                    )
-                                }
-                            }
-                        }
-
-                        Divider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = { viewModel.logout() },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.error
-                                ),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.4f)),
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text("Sair da Conta 🌐", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-
-                            Button(
-                                onClick = {
-                                    if (!isBackupOngoing) {
-                                        isBackupOngoing = true
-                                        coroutineScope.launch {
-                                            try {
-                                                backupStatusText = "Conectando ao Google Cloud..."
-                                                customBackupProgress = 0.1f
-                                                kotlinx.coroutines.delay(800)
-                                                backupStatusText = "Consolidando dados do Diário (${diaryEntries.size} itens)..."
-                                                customBackupProgress = 0.35f
-                                                kotlinx.coroutines.delay(1000)
-                                                backupStatusText = "Salvando APKs e sessões de jogos na nuvem..."
-                                                customBackupProgress = 0.7f
-                                                kotlinx.coroutines.delay(1200)
-                                                backupStatusText = "Finalizando e definindo ponto de restauração..."
-                                                customBackupProgress = 0.95f
-                                                kotlinx.coroutines.delay(600)
-                                                customBackupProgress = 1.0f
-                                                android.widget.Toast.makeText(context, "Sincronização concluída com sucesso no Google Drive!", android.widget.Toast.LENGTH_LONG).show()
-                                            } catch (e: Exception) {
-                                                // ignore
-                                            } finally {
-                                                isBackupOngoing = false
-                                                backupStatusText = ""
-                                            }
-                                        }
-                                    }
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
-                                modifier = Modifier.weight(1.2f)
-                            ) {
-                                Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Salvar Tudo", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-                    } else {
-                        // User not logged in dialog / panel
-                        Column(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF1976D2).copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
                         ) {
                             Text(
-                                text = "Você não está conectado à nuvem.",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold,
+                                text = (userName ?: "J").take(1).uppercase(),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 18.sp,
+                                color = Color(0xFF1976D2)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = userName ?: "Juvenira Reis",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = userEmail ?: "reisjuvenira468@gmail.com",
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Text(
-                                text = "Para salvar ou resgatar o progresso de seus jogos, downloads de APK e anotações, faça login com sua conta do Google de forma 100% segura.",
-                                fontSize = 11.sp,
-                                textAlign = TextAlign.Center,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                                lineHeight = 15.sp
-                            )
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Button(
-                                onClick = { viewModel.loginWithGoogle() },
-                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
-                                shape = RoundedCornerShape(10.dp),
-                                modifier = Modifier.fillMaxWidth()
+                        }
+
+                        Surface(
+                            shape = CircleShape,
+                            color = Color(0xFFE8F5E9),
+                            modifier = Modifier.padding(start = 4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
-                                Text("G ", fontWeight = FontWeight.Black, fontSize = 14.sp, color = Color.White)
-                                Text("Entrar com o Google para Sincronizar", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(Color(0xFF2E7D32))
+                                )
+                                Text(
+                                    text = "Conectado",
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF2E7D32)
+                                )
                             }
+                        }
+                    }
+
+                    Divider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                viewModel.saveProgress()
+                            },
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1976D2)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.CloudUpload, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Salvar Tudo na Nuvem Google ☁️", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -4123,17 +5848,9 @@ fun NuvemCloudScreen(viewModel: com.example.ui.DiaryViewModel) {
                     ) {
                         Button(
                             onClick = {
-                                if (selectedBackupToRestore == null) {
-                                    android.widget.Toast.makeText(context, "Selecione um ponto de backup primeiro!", android.widget.Toast.LENGTH_SHORT).show()
-                                } else {
-                                    coroutineScope.launch {
-                                        android.widget.Toast.makeText(context, "Iniciando restauração de dados da nuvem...", android.widget.Toast.LENGTH_SHORT).show()
-                                        kotlinx.coroutines.delay(1200)
-                                        showRestoreSuccessDialog = true
-                                    }
-                                }
+                                viewModel.loadProgress()
                             },
-                            enabled = isLoggedIn && selectedBackupToRestore != null,
+                            enabled = isLoggedIn,
                             colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0288D1)),
                             shape = RoundedCornerShape(10.dp),
                             modifier = Modifier.weight(1f)
@@ -4186,115 +5903,8 @@ fun PlayStoreScreen(viewModel: com.example.ui.DiaryViewModel) {
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
-    if (!isLoggedIn) {
-        // GOOGLE GMS ACCOUNT SIGN-IN SCREEN (Requirement 1)
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            // Google Logo Custom Representation
-            Row(
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(bottom = 24.dp)
-            ) {
-                Text("G", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
-                Text("o", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA4335))
-                Text("o", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFFFBBC05))
-                Text("g", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFF4285F4))
-                Text("l", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFF34A853))
-                Text("e", fontSize = 48.sp, fontWeight = FontWeight.Bold, color = Color(0xFFEA4335))
-            }
-
-            Text(
-                text = "Fazer login no celular virtual",
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 6.dp)
-            )
-            
-            Text(
-                text = "Use sua conta Google para liberar a Google Play Store, GMS (Google Mobile Services) e o antivírus Protect de segurança.",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(bottom = 24.dp)
-            )
-
-            if (isLoggingInSimulated) {
-                CircularProgressIndicator(
-                    modifier = Modifier.size(48.dp),
-                    color = Color(0xFF01875F)
-                )
-                Spacer(modifier = Modifier.height(16.dp))
-                Text(
-                    text = loginStepMessage,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-            } else {
-                OutlinedTextField(
-                    value = tempEmail,
-                    onValueChange = { tempEmail = it },
-                    label = { Text("E-mail ou telefone") },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                OutlinedTextField(
-                    value = tempPassword,
-                    onValueChange = { tempPassword = it },
-                    label = { Text("Senha") },
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
-                    singleLine = true,
-                    visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(),
-                    shape = RoundedCornerShape(12.dp)
-                )
-
-                Button(
-                    onClick = {
-                        isLoggingInSimulated = true
-                        coroutineScope.launch {
-                            loginStepMessage = "Verificando assinatura SHA-1 local..."
-                            delay(800)
-                            loginStepMessage = "Conectando ao gateway do Google Play Services..."
-                            delay(800)
-                            loginStepMessage = "Provisionando token de segurança GMS..."
-                            delay(800)
-                            loginStepMessage = "Sincronizando contatos, emails e configurações..."
-                            delay(600)
-                            viewModel.loginWithGoogle()
-                            isLoggingInSimulated = false
-                        }
-                    },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF01875F)),
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().height(48.dp)
-                ) {
-                    Icon(Icons.Default.Lock, contentDescription = null, modifier = Modifier.size(16.dp), tint = Color.White)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("FAZER LOGIN COM O GOOGLE SECURE GMS 🔐", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                }
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                TextButton(
-                    onClick = { viewModel.loginWithGoogle() }
-                ) {
-                    Text("Ignorar e usar login padrão automático", fontSize = 11.sp, color = Color(0xFF01875F))
-                }
-            }
-        }
-    } else {
-        // SIGNED-IN PLAY STORE CONTENT (Requirement 1, 6)
-        when (activePlayingGame) {
+    // Official Google Play Store Content
+    when (activePlayingGame) {
             "tic_tac_toe" -> {
                 TicTacToeGameScreen(onBack = { activePlayingGame = null })
             }
@@ -4650,6 +6260,105 @@ fun PlayStoreScreen(viewModel: com.example.ui.DiaryViewModel) {
                             }
                         }
 
+                        // Bitdefender Mobile Security card
+                        item {
+                            val isBitdefenderInstalled = installedApps.contains("Bitdefender Mobile Security")
+                            var isBitdefenderDownloading by remember { mutableStateOf(false) }
+                            var bitdefenderProgress by remember { mutableStateOf(0) }
+
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFC62828).copy(alpha = 0.2f)),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(Color(0xFFFFEBEE)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text("🛡️🔴", fontSize = 22.sp)
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text(
+                                                text = "Bitdefender Security",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "SEG",
+                                                fontSize = 8.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = Color(0xFFC62828),
+                                                modifier = Modifier
+                                                    .background(Color(0xFFFFEBEE), RoundedCornerShape(4.dp))
+                                                    .padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                        Text("Bitdefender • Antivírus & VPN • 4.8 ★", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        
+                                        if (isBitdefenderDownloading) {
+                                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                                CircularProgressIndicator(
+                                                    progress = bitdefenderProgress / 100f,
+                                                    modifier = Modifier.size(12.dp),
+                                                    strokeWidth = 1.5.dp,
+                                                    color = Color(0xFFC62828)
+                                                )
+                                                Text(
+                                                    text = "Baixando $bitdefenderProgress%...",
+                                                    fontSize = 9.sp,
+                                                    color = Color(0xFFC62828),
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        } else {
+                                            Text("Play Protect: 100% SEGURO (Risco: 0/100)", fontSize = 9.sp, color = Color(0xFF2E7D32))
+                                        }
+                                    }
+
+                                    Button(
+                                        onClick = {
+                                            if (isBitdefenderInstalled) {
+                                                viewModel.uninstallVirtualApp("Bitdefender Mobile Security")
+                                                Toast.makeText(context, "Bitdefender desinstalado!", Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                isBitdefenderDownloading = true
+                                                bitdefenderProgress = 0
+                                                coroutineScope.launch {
+                                                    for (p in 1..100) {
+                                                        delay(15)
+                                                        bitdefenderProgress = p
+                                                    }
+                                                    isBitdefenderDownloading = false
+                                                    viewModel.installVirtualApp("Bitdefender Mobile Security")
+                                                    Toast.makeText(context, "Bitdefender Mobile Security instalado com sucesso!", Toast.LENGTH_SHORT).show()
+                                                }
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(containerColor = if (isBitdefenderInstalled) Color(0xFFC62828) else Color(0xFF01875F)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.height(32.dp),
+                                        contentPadding = PaddingValues(horizontal = 10.dp),
+                                        enabled = !isBitdefenderDownloading
+                                    ) {
+                                        Text(if (isBitdefenderInstalled) "Remover" else "Instalar", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+
                         // Jogo 1: Jogo da Velha (Tic-Tac-Toe AI)
                         item {
                             PlayStoreGameCard(
@@ -4733,7 +6442,6 @@ fun PlayStoreScreen(viewModel: com.example.ui.DiaryViewModel) {
                 }
             }
         }
-    }
 
     // PLAY PROTECT ADVANCED SECURITY DASHBOARD DIALOG (Requirement 2, 3, 4, 6)
     if (showPlayProtectDashboard) {
@@ -5655,6 +7363,9 @@ fun HardwareConfigurationDialog(
     onTogglePhysicalFullScreen: (Boolean) -> Unit,
     onDismiss: () -> Unit,
     onTriggerSoftwareUpdate: () -> Unit,
+    androidVersion: String,
+    securityPatchLevel: String,
+    onOpenGoogleUpdateCenter: () -> Unit,
     onSave: (ram: Int, storage: Int, processor: String, volume: Int, soundEnabled: Boolean) -> Unit
 ) {
     var selectedRam by remember { mutableStateOf(currentRam) }
@@ -5671,11 +7382,11 @@ fun HardwareConfigurationDialog(
     val context = LocalContext.current
     
     val processorOptions = listOf(
+        "MediaTek Dimensity 9400 Octa-Core @ 3.4 GHz",
+        "Snapdragon 8 Gen 4 Octa-Core @ 4.09 GHz",
         "MediaTek Dimensity 7300 Ultra Octa-Core @ 2.5 GHz",
         "Snapdragon 8 Gen 3 Octa-Core @ 3.39 GHz",
-        "MediaTek Dimensity 9300 Deca-Core @ 3.25 GHz",
-        "Exynos 2400 Deca-Core @ 3.20 GHz",
-        "Tensor G4 Custom Core @ 3.10 GHz"
+        "MediaTek Dimensity 9300 Deca-Core @ 3.25 GHz"
     )
     val ramOptions = listOf(8, 12, 16, 24, 32)
     val storageOptions = listOf(128, 256, 512, 1024)
@@ -5769,85 +7480,53 @@ fun HardwareConfigurationDialog(
                                 color = Color(0xFFF57C00)
                             )
                             
-                            if (virtualDeviceModel != "Redmi 15") {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = Color(0xFFEF4444).copy(alpha = 0.08f)
-                                    ),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.4f))
-                                ) {
-                                    Column(
-                                        modifier = Modifier.padding(14.dp),
-                                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                                    ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                        ) {
-                                            Text("🔄", fontSize = 20.sp)
-                                            Column {
-                                                Text(
-                                                    text = "Atualização Oficial Xiaomi ROM",
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontSize = 13.sp,
-                                                    color = Color.White
-                                                )
-                                                Text(
-                                                    text = "Google OTA HyperOS v15 disponível",
-                                                    fontSize = 10.sp,
-                                                    color = Color(0xFFFCA5A5)
-                                                )
-                                            }
-                                        }
-                                        
-                                        Text(
-                                            text = "Seu celular virtual está em hardware legado. Atualize gratuitamente para o Xiaomi Redmi 15 com 8 GB RAM LPDDR5X, 256 GB Armazenamento UFS 4.0 ultra-rápido e chipset MediaTek Dimensity 8300-Ultra.",
-                                            fontSize = 11.sp,
-                                            color = Color.White.copy(alpha = 0.8f),
-                                            lineHeight = 15.sp
-                                        )
-                                        
-                                        Button(
-                                            onClick = { onTriggerSoftwareUpdate() },
-                                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier.fillMaxWidth().height(36.dp),
-                                            contentPadding = PaddingValues(0.dp)
-                                        ) {
-                                            Text("Instalar Atualização do Sistema ⚡", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                                        }
-                                    }
-                                }
-                            } else {
-                                Card(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    shape = RoundedCornerShape(16.dp),
-                                    colors = CardDefaults.cardColors(
-                                        containerColor = Color(0xFF10B981).copy(alpha = 0.1f)
-                                    ),
-                                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.4f))
+                            Card(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(
+                                    containerColor = Color(0xFF4285F4).copy(alpha = 0.08f)
+                                ),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF4285F4).copy(alpha = 0.4f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(14.dp),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        Text("✅", fontSize = 22.sp)
+                                        Text("🤖", fontSize = 20.sp)
                                         Column {
                                             Text(
-                                                text = "Redmi 15 Totalmente Atualizado!",
+                                                text = "Google Android Update Center",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 13.sp,
                                                 color = Color.White
                                             )
                                             Text(
-                                                text = "Google OTA em dia | HyperOS Android 14 estável.",
-                                                fontSize = 10.sp,
-                                                color = Color(0xFF10B981)
+                                                text = "Versão atual: $androidVersion | Patch: $securityPatchLevel",
+                                                fontSize = 11.sp,
+                                                color = Color(0xFF93C5FD)
                                             )
                                         }
+                                    }
+                                    
+                                    Text(
+                                        text = "Gerencie as atualizações oficiais de sistema operacional e de segurança mensais da Google diretamente pelos servidores OTA oficiais.",
+                                        fontSize = 11.sp,
+                                        color = Color.White.copy(alpha = 0.8f),
+                                        lineHeight = 15.sp
+                                    )
+                                    
+                                    Button(
+                                        onClick = { onOpenGoogleUpdateCenter() },
+                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF4285F4)),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth().height(36.dp),
+                                        contentPadding = PaddingValues(0.dp)
+                                    ) {
+                                        Text("Abrir Central de Atualizações 🔐", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color.White)
                                     }
                                 }
                             }
@@ -6412,6 +8091,261 @@ fun GameBoosterCard() {
                     )
                 }
             }
+        }
+    }
+}
+
+// --- INTERACTIVE TUTORIAL DIALOG ---
+@Composable
+fun InteractiveTutorialDialog(
+    onDismiss: () -> Unit,
+    onSelectTab: (Int) -> Unit
+) {
+    var currentStep by remember { mutableStateOf(1) }
+    val totalSteps = 5
+
+    val stepTitles = listOf(
+        "Boas-vindas ao Celular Virtual & Diário AI 📱",
+        "Anotações & Insights com Gemini AI 🧠",
+        "Google Play Store, Jogos & Antivírus AI 🛡️",
+        "Configurações de Hardware, Root & OTA ⚙️",
+        "Sistema de Salvamento & Backup Cloud 💾"
+    )
+
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss
+    ) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .wrapContentHeight()
+                .padding(8.dp),
+            shape = RoundedCornerShape(24.dp),
+            tonalElevation = 12.dp,
+            border = androidx.compose.foundation.BorderStroke(2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Header Bar
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = "🎓",
+                                fontSize = 20.sp,
+                                modifier = Modifier.padding(8.dp)
+                            )
+                        }
+                        Column {
+                            Text(
+                                text = "Tutorial Interativo",
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 16.sp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Passo $currentStep de $totalSteps",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                        Icon(Icons.Default.Close, contentDescription = "Fechar Tutorial", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
+                // Progress Indicator
+                LinearProgressIndicator(
+                    progress = currentStep.toFloat() / totalSteps.toFloat(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = MaterialTheme.colorScheme.primary,
+                    trackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
+                )
+
+                // Step Content Card
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                    border = CardDefaults.outlinedCardBorder(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = stepTitles[currentStep - 1],
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+
+                        when (currentStep) {
+                            1 -> {
+                                Text(
+                                    text = "Seja bem-vindo ao ambiente de celular virtual Android com IA integrada! Aqui você encontra um ambiente completo com alta performance.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                StepDetailRow("📱 Dispositivo Virtual", "Redmi 15 com Android 14 HyperOS oficial e suporte total.")
+                                StepDetailRow("⚡ Ações Rápidas", "Acesse abas inferiores ou puxe a barra superior para notificações.")
+                            }
+                            2 -> {
+                                Text(
+                                    text = "Na aba Diário e na Sessão AI, você pode registrar o que está sentindo e conversar com a inteligência artificial Gemini.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                StepDetailRow("✍️ Registro Pessoal", "Toque no botão '+' para salvar memórias e categorizar seu humor.")
+                                StepDetailRow("💡 Insights de IA", "Clique em 'Insights IA' no Diário para receber análises profundas do Gemini.")
+                                StepDetailRow("⏳ Indicador Visual", "Um indicador circular avisará quando o Gemini estiver processando.")
+                            }
+                            3 -> {
+                                Text(
+                                    text = "Acesse a Play Store integrada para navegar por aplicativos, rodar jogos arcade e manter seu celular protegido.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                StepDetailRow("🛍️ Play Store & Aurora", "Baixe APKs e instale aplicativos no sandbox virtual.")
+                                StepDetailRow("🎮 Jogos Embutidos", "Jogue Cobrinha Retro, Jogo da Velha AI e Pixel Dungeon.")
+                                StepDetailRow("🛡️ Antivírus Heurístico", "Execute varreduras preventivas com Google Antivírus & Bitdefender.")
+                            }
+                            4 -> {
+                                Text(
+                                    text = "Configure recursos de hardware avançados e aproveite o acesso a superusuário e atualizações oficiais.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                StepDetailRow("⚙️ RAM & Armazenamento", "Defina até 32 GB de RAM e 1 TB de memória interna UFS 4.0.")
+                                StepDetailRow("⚡ Root Verdadeiro", "Execute comandos shell Linux reais diretamente no terminal root.")
+                                StepDetailRow("🔄 Atualizações OTA", "Receba novos patches de segurança oficiais da Google em 1 toque.")
+                            }
+                            5 -> {
+                                Text(
+                                    text = "Nunca perca seu progresso! Nosso sistema permite salvar instantaneamente seu progresso e restaurá-lo a qualquer momento.",
+                                    fontSize = 12.sp,
+                                    lineHeight = 17.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                StepDetailRow("💾 Salvar Progresso", "Clique em 'Salvar Tudo' na aba Nuvem Cloud ou no menu superior.")
+                                StepDetailRow("📂 Restaurar Ponto", "Restaure diários, dados de jogos e preferências salvas com 1 clique.")
+                                StepDetailRow("☁️ Nuvem Google Drive", "Mantenha backups em nuvem sempre sincronizados.")
+                            }
+                        }
+                    }
+                }
+
+                // Interactive Quick Jump Tab Button
+                OutlinedButton(
+                    onClick = {
+                        val targetTab = when (currentStep) {
+                            1 -> 0
+                            2 -> 1
+                            3 -> 2
+                            4 -> 3
+                            5 -> 4
+                            else -> 0
+                        }
+                        onSelectTab(targetTab)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(
+                        text = when (currentStep) {
+                            1 -> "Ir para a aba Diário 📖"
+                            2 -> "Ir para a aba Sessão AI 🧠"
+                            3 -> "Ir para a Play Store 🛍️"
+                            4 -> "Ir para a aba Instalador APK ⚡"
+                            else -> "Ir para a aba Nuvem Cloud ☁️"
+                        },
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                // Bottom Controls Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (currentStep > 1) {
+                        OutlinedButton(
+                            onClick = { currentStep-- },
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Text("Anterior", fontSize = 11.sp)
+                        }
+                    } else {
+                        TextButton(onClick = onDismiss) {
+                            Text("Pular", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (currentStep < totalSteps) {
+                                currentStep++
+                            } else {
+                                onDismiss()
+                            }
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text(
+                            text = if (currentStep < totalSteps) "Próximo ➡️" else "Concluir Tutorial 🎉",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepDetailRow(title: String, desc: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text("•", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+        Column {
+            Text(text = title, fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+            Text(text = desc, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
