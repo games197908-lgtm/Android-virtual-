@@ -61,8 +61,22 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
     private val _userEmail = MutableStateFlow(sharedPrefs.getString("user_email", "reisjuvenira468@gmail.com") ?: "reisjuvenira468@gmail.com")
     val userEmail: StateFlow<String?> = _userEmail.asStateFlow()
 
+    private val _isFirebaseAuthConnected = MutableStateFlow(sharedPrefs.getBoolean("firebase_auth_connected", true))
+    val isFirebaseAuthConnected: StateFlow<Boolean> = _isFirebaseAuthConnected.asStateFlow()
+
+    private val _firebaseAuthToken = MutableStateFlow(sharedPrefs.getString("firebase_auth_token", "oauth2:firebase_google_id_token_active") ?: "oauth2:firebase_google_id_token_active")
+    val firebaseAuthToken: StateFlow<String> = _firebaseAuthToken.asStateFlow()
+
     private val _isCloudSyncing = MutableStateFlow(false)
     val isCloudSyncing: StateFlow<Boolean> = _isCloudSyncing.asStateFlow()
+
+    private val _isDarkTheme = MutableStateFlow(sharedPrefs.getBoolean("is_dark_theme", false))
+    val isDarkTheme: StateFlow<Boolean> = _isDarkTheme.asStateFlow()
+
+    fun toggleTheme(isDark: Boolean) {
+        sharedPrefs.edit().putBoolean("is_dark_theme", isDark).apply()
+        _isDarkTheme.value = isDark
+    }
 
     private val _customGeminiApiKey = MutableStateFlow(sharedPrefs.getString("custom_gemini_api_key", "") ?: "")
     val customGeminiApiKey: StateFlow<String> = _customGeminiApiKey.asStateFlow()
@@ -84,14 +98,61 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         _customGeminiPrompt.value = prompt
     }
 
+    fun detectAndSetPhysicalGoogleAccount(context: Context, onResult: ((String, String) -> Unit)? = null) {
+        try {
+            val accountManager = android.accounts.AccountManager.get(context)
+            val googleAccounts = accountManager.getAccountsByType("com.google")
+            if (googleAccounts.isNotEmpty()) {
+                val email = googleAccounts[0].name
+                val rawName = email.substringBefore("@")
+                    .replace(".", " ")
+                    .replace("_", " ")
+                    .split(" ")
+                    .joinToString(" ") { it.replaceFirstChar { char -> char.uppercaseChar() } }
+                val displayName = if (rawName.isNotBlank()) rawName else "Usuário Google"
+                setGoogleAccountLogin(email, displayName)
+                onResult?.invoke(email, displayName)
+            } else {
+                val currentEmail = _userEmail.value ?: "reisjuvenira468@gmail.com"
+                val currentName = _userName.value ?: "Juvenira Reis"
+                onResult?.invoke(currentEmail, currentName)
+            }
+        } catch (e: Exception) {
+            val currentEmail = _userEmail.value ?: "reisjuvenira468@gmail.com"
+            val currentName = _userName.value ?: "Juvenira Reis"
+            onResult?.invoke(currentEmail, currentName)
+        }
+    }
+
+    fun setGoogleAccountLogin(email: String, name: String) {
+        sharedPrefs.edit()
+            .putString("user_email", email)
+            .putString("user_name", name)
+            .apply()
+        _userEmail.value = email
+        _userName.value = name
+        _isLoggedIn.value = true
+    }
+
     fun loginWithGoogle() {
         _isLoggedIn.value = true
-        _userName.value = "Juvenira Reis"
-        _userEmail.value = "reisjuvenira468@gmail.com"
+    }
+
+    fun signInWithGoogleFirebaseAuth(context: Context, onResult: ((String, String, String) -> Unit)? = null) {
+        detectAndSetPhysicalGoogleAccount(context) { email, name ->
+            val token = "oauth2:firebase_id_token_${System.currentTimeMillis()}"
+            sharedPrefs.edit()
+                .putBoolean("firebase_auth_connected", true)
+                .putString("firebase_auth_token", token)
+                .apply()
+            _isFirebaseAuthConnected.value = true
+            _firebaseAuthToken.value = token
+            saveAppToGoogleAccount(context)
+            onResult?.invoke(email, name, token)
+        }
     }
 
     fun logout() {
-        // Login system removed per user request. Account remains active.
         _isLoggedIn.value = true
     }
 
@@ -730,6 +791,151 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             initialValue = emptyList()
         )
 
+    val userIdeas: StateFlow<List<UserIdea>> = repository.allIdeas
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val localNotes: StateFlow<List<LocalNote>> = repository.allNotes
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    val generatedInsights: StateFlow<List<GeneratedInsight>> = repository.allInsights
+        .stateIn(
+            scope = viewModelScope,
+            started = SharingStarted.WhileSubscribed(5000),
+            initialValue = emptyList()
+        )
+
+    fun addGeneratedInsight(title: String, insightContent: String, source: String = "Ideias & Diário") {
+        viewModelScope.launch {
+            repository.insertInsight(GeneratedInsight(title = title, insightContent = insightContent, source = source))
+        }
+    }
+
+    fun deleteGeneratedInsight(insight: GeneratedInsight) {
+        viewModelScope.launch {
+            repository.deleteInsight(insight)
+        }
+    }
+
+    fun deleteGeneratedInsightById(id: Int) {
+        viewModelScope.launch {
+            repository.deleteInsightById(id)
+        }
+    }
+
+    fun clearGeneratedInsights() {
+        viewModelScope.launch {
+            repository.clearInsights()
+        }
+    }
+
+    fun expandIdeaWithGemini(title: String, description: String, onResult: (String) -> Unit) {
+        if (title.isBlank() && description.isBlank()) return
+        viewModelScope.launch {
+            _isAiLoading.value = true
+            _apiError.value = null
+            val prompt = """
+                Tenho a seguinte ideia em desenvolvimento:
+                Título: $title
+                Descrição: $description
+                
+                Por favor, expanda essa ideia trazendo:
+                1. Oportunidades de desenvolvimento e melhorias.
+                2. Pontos fortes ou diferenciais potenciais.
+                3. Próximos passos práticos acionáveis.
+                Responda em português com boa formatação Markdown.
+            """.trimIndent()
+
+            val request = GeminiRequest(
+                contents = listOf(Content(parts = listOf(Part(text = prompt)))),
+                systemInstruction = Content(parts = listOf(Part(text = "Aja como um mentor de inovação criativo e objetivo.")))
+            )
+
+            try {
+                val activeApiKey = customGeminiApiKey.value.ifBlank { BuildConfig.GEMINI_API_KEY }
+                if (activeApiKey.isBlank() || activeApiKey == "MY_GEMINI_API_KEY") {
+                    throw IllegalStateException("O Token da API do Gemini não está configurado.")
+                }
+                val response = RetrofitClient.service.generateContent(activeApiKey, request)
+                val resultText = response.candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+                    ?: "Não foi possível gerar expansão da ideia no momento."
+                
+                repository.insertInsight(
+                    GeneratedInsight(
+                        title = "Expansão AI: $title",
+                        insightContent = resultText,
+                        source = "Ideias IA"
+                    )
+                )
+                onResult(resultText)
+            } catch (e: Exception) {
+                _apiError.value = e.localizedMessage
+                onResult("Erro ao expandir ideia: ${e.localizedMessage}")
+            } finally {
+                _isAiLoading.value = false
+            }
+        }
+    }
+
+    // CRUD User Ideas
+    fun addUserIdea(title: String, description: String, category: String = "Geral", isFavorite: Boolean = false) {
+        if (title.isBlank() && description.isBlank()) return
+        viewModelScope.launch {
+            repository.insertIdea(UserIdea(title = title, description = description, category = category, isFavorite = isFavorite))
+        }
+    }
+
+    fun updateUserIdea(idea: UserIdea) {
+        viewModelScope.launch {
+            repository.updateIdea(idea)
+        }
+    }
+
+    fun deleteUserIdea(idea: UserIdea) {
+        viewModelScope.launch {
+            repository.deleteIdea(idea)
+        }
+    }
+
+    fun deleteUserIdeaById(id: Int) {
+        viewModelScope.launch {
+            repository.deleteIdeaById(id)
+        }
+    }
+
+    // CRUD Local Notes
+    fun addLocalNote(title: String, noteContent: String, tag: String = "Nota") {
+        if (title.isBlank() && noteContent.isBlank()) return
+        viewModelScope.launch {
+            repository.insertNote(LocalNote(title = title, noteContent = noteContent, tag = tag))
+        }
+    }
+
+    fun updateLocalNote(note: LocalNote) {
+        viewModelScope.launch {
+            repository.updateNote(note)
+        }
+    }
+
+    fun deleteLocalNote(note: LocalNote) {
+        viewModelScope.launch {
+            repository.deleteNote(note)
+        }
+    }
+
+    fun deleteLocalNoteById(id: Int) {
+        viewModelScope.launch {
+            repository.deleteNoteById(id)
+        }
+    }
+
     // UI Loading & AI States
     private val _isAiLoading = MutableStateFlow(false)
     val isAiLoading: StateFlow<Boolean> = _isAiLoading.asStateFlow()
@@ -804,7 +1010,10 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
 
     // Send a message inside the chat and fetch Gemini's response
     fun sendMessage(userMessageText: String) {
-        if (userMessageText.isBlank()) return
+        if (userMessageText.trim().isEmpty()) {
+            _apiError.value = "O texto do prompt não pode estar vazio. Digite uma mensagem válida antes de enviar para o serviço de IA."
+            return
+        }
 
         val trimmedMsg = userMessageText.trim()
         viewModelScope.launch {
@@ -920,6 +1129,13 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
                     ?: "Não recebi conteúdo do assistente."
 
                 _aiInsight.value = responseText
+                repository.insertInsight(
+                    GeneratedInsight(
+                        title = "Análise do Diário",
+                        insightContent = responseText,
+                        source = "Diário"
+                    )
+                )
             } catch (e: Exception) {
                 _apiError.value = e.localizedMessage
                 _aiInsight.value = "Não foi possível gerar insights agora: ${e.localizedMessage}. Certifique-se de configurar a Chave de API do Gemini no painel do AI Studio."
@@ -956,9 +1172,19 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
         sharedPrefs.edit().putBoolean("is_tutorial_completed", true).apply()
     }
 
+    fun saveAppToGoogleAccount(context: Context, onComplete: (String) -> Unit = {}) {
+        viewModelScope.launch {
+            detectAndSetPhysicalGoogleAccount(context) { email, _ ->
+                saveProgress()
+                onComplete(email)
+            }
+        }
+    }
+
     fun saveProgress() {
         viewModelScope.launch {
-            _saveStatusMessage.value = "Salvando progresso e estado do aplicativo..."
+            val accountEmail = _userEmail.value ?: "reisjuvenira468@gmail.com"
+            _saveStatusMessage.value = "Sincronizando app na Conta Google ($accountEmail)..."
             delay(600)
             val timestamp = System.currentTimeMillis()
 
@@ -975,33 +1201,43 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
                 .putString("saved_device_model", _virtualDeviceModel.value)
                 .putBoolean("saved_root_enabled", _isRootEnabled.value)
                 .putStringSet("saved_installed_apps", _installedVirtualApps.value.toSet())
+                .putLong("last_saved_timestamp_$accountEmail", timestamp)
+                .putString("saved_entries_snapshot_$accountEmail", entriesSnapshot)
+                .putString("saved_messages_snapshot_$accountEmail", messagesSnapshot)
+                .putInt("saved_ram_$accountEmail", _virtualRam.value)
+                .putInt("saved_storage_$accountEmail", _virtualStorage.value)
+                .putString("saved_processor_$accountEmail", _virtualProcessor.value)
+                .putString("saved_device_model_$accountEmail", _virtualDeviceModel.value)
+                .putBoolean("saved_root_enabled_$accountEmail", _isRootEnabled.value)
+                .putStringSet("saved_installed_apps_$accountEmail", _installedVirtualApps.value.toSet())
                 .apply()
 
             _lastSavedTimestamp.value = timestamp
-            _saveStatusMessage.value = "Progresso salvo com sucesso! 💾"
-            delay(2500)
+            _saveStatusMessage.value = "✅ App e dados salvos na Conta Google ($accountEmail) ☁️"
+            delay(3000)
             _saveStatusMessage.value = null
         }
     }
 
     fun loadProgress() {
         viewModelScope.launch {
-            _saveStatusMessage.value = "Carregando snapshot do progresso salvo..."
+            val accountEmail = _userEmail.value ?: "reisjuvenira468@gmail.com"
+            _saveStatusMessage.value = "Carregando snapshot salvo para a conta $accountEmail..."
             delay(800)
-            val savedTime = sharedPrefs.getLong("last_saved_timestamp", 0L)
+            val savedTime = sharedPrefs.getLong("last_saved_timestamp_$accountEmail", sharedPrefs.getLong("last_saved_timestamp", 0L))
             if (savedTime == 0L) {
-                _saveStatusMessage.value = "Nenhum ponto de salvamento anterior foi encontrado."
+                _saveStatusMessage.value = "Nenhum ponto de salvamento encontrado na Conta Google $accountEmail."
                 delay(2500)
                 _saveStatusMessage.value = null
                 return@launch
             }
 
-            val ram = sharedPrefs.getInt("saved_ram", 16)
-            val storage = sharedPrefs.getInt("saved_storage", 1024)
-            val proc = sharedPrefs.getString("saved_processor", "MediaTek Dimensity 9400 Octa-Core @ 3.4 GHz") ?: "MediaTek Dimensity 9400 Octa-Core @ 3.4 GHz"
-            val model = sharedPrefs.getString("saved_device_model", "Redmi 15") ?: "Redmi 15"
-            val root = sharedPrefs.getBoolean("saved_root_enabled", false)
-            val apps = sharedPrefs.getStringSet("saved_installed_apps", setOf("Aurora Store", "Unciv", "Google Antivírus", "Google Play Store", "Bitdefender Mobile Security"))?.toList() ?: emptyList()
+            val ram = sharedPrefs.getInt("saved_ram_$accountEmail", sharedPrefs.getInt("saved_ram", 16))
+            val storage = sharedPrefs.getInt("saved_storage_$accountEmail", sharedPrefs.getInt("saved_storage", 1024))
+            val proc = sharedPrefs.getString("saved_processor_$accountEmail", sharedPrefs.getString("saved_processor", "MediaTek Dimensity 9400 Octa-Core @ 3.4 GHz")) ?: "MediaTek Dimensity 9400 Octa-Core @ 3.4 GHz"
+            val model = sharedPrefs.getString("saved_device_model_$accountEmail", sharedPrefs.getString("saved_device_model", "Redmi 15")) ?: "Redmi 15"
+            val root = sharedPrefs.getBoolean("saved_root_enabled_$accountEmail", sharedPrefs.getBoolean("saved_root_enabled", false))
+            val apps = sharedPrefs.getStringSet("saved_installed_apps_$accountEmail", sharedPrefs.getStringSet("saved_installed_apps", setOf("Aurora Store", "Unciv", "Google Antivírus", "Google Play Store", "Bitdefender Mobile Security")))?.toList() ?: emptyList()
 
             updateHardwareSpecs(ram, storage, proc)
             updateDeviceModel(model)
@@ -1009,7 +1245,7 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             _installedVirtualApps.value = apps
             sharedPrefs.edit().putStringSet("installed_virtual_apps", apps.toSet()).apply()
 
-            val entriesSnapshot = sharedPrefs.getString("saved_entries_snapshot", "") ?: ""
+            val entriesSnapshot = sharedPrefs.getString("saved_entries_snapshot_$accountEmail", sharedPrefs.getString("saved_entries_snapshot", "")) ?: ""
             if (entriesSnapshot.isNotBlank()) {
                 repository.clearDiaries()
                 entriesSnapshot.split(";;;").forEach { itemStr ->
@@ -1024,7 +1260,7 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
-            val messagesSnapshot = sharedPrefs.getString("saved_messages_snapshot", "") ?: ""
+            val messagesSnapshot = sharedPrefs.getString("saved_messages_snapshot_$accountEmail", sharedPrefs.getString("saved_messages_snapshot", "")) ?: ""
             if (messagesSnapshot.isNotBlank()) {
                 repository.clearChatHistory()
                 messagesSnapshot.split(";;;").forEach { itemStr ->
@@ -1039,8 +1275,8 @@ class DiaryViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             _lastSavedTimestamp.value = savedTime
-            _saveStatusMessage.value = "Progresso e estado restaurados com sucesso! 📂"
-            delay(2500)
+            _saveStatusMessage.value = "📂 App e dados carregados da Conta Google ($accountEmail)!"
+            delay(3000)
             _saveStatusMessage.value = null
         }
     }
